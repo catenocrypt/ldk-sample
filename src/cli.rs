@@ -584,6 +584,9 @@ fn open_channel(
 	peer_pubkey: PublicKey, channel_amt_sat: u64, announced_channel: bool,
 	channel_manager: Arc<ChannelManager>,
 ) -> Result<(), ()> {
+	// Adam: minimal confirmations
+	let min_confirmations = 2;
+
 	let config = UserConfig {
 		channel_handshake_limits: ChannelHandshakeLimits {
 			// lnd's max to_self_delay is 2016, so we want to be compatible.
@@ -591,6 +594,10 @@ fn open_channel(
 			..Default::default()
 		},
 		channel_handshake_config: ChannelHandshakeConfig {
+
+			// Adam: let's wait for 2 confirmations only instead of default 6
+			minimum_depth: min_confirmations,
+
 			announced_channel,
 			..Default::default()
 		},
