@@ -458,6 +458,10 @@ async fn start_ldk() {
 
 	// Step 8: Initialize the ChannelManager
 	let mut user_config = UserConfig::default();
+
+	// Adam: route to private
+	user_config.accept_forwards_to_priv_channels = true;
+
 	user_config.channel_handshake_limits.force_announced_channel_preference = false;
 	let mut restarting_node = true;
 	let (channel_manager_blockhash, channel_manager) = {
