@@ -584,8 +584,8 @@ fn open_channel(
 	peer_pubkey: PublicKey, channel_amt_sat: u64, announced_channel: bool,
 	channel_manager: Arc<ChannelManager>,
 ) -> Result<(), ()> {
-	// Adam: minimal confirmations
-	let min_confirmations = 2;
+	// Adam: wait for 1 confirmation only instead of default 6
+	let min_confirmations = 1;
 
 	let config = UserConfig {
 		channel_handshake_limits: ChannelHandshakeLimits {
@@ -595,7 +595,7 @@ fn open_channel(
 		},
 		channel_handshake_config: ChannelHandshakeConfig {
 
-			// Adam: let's wait for 2 confirmations only instead of default 6
+			// Adam
 			minimum_depth: min_confirmations,
 
 			announced_channel,

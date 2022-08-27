@@ -459,6 +459,9 @@ async fn start_ldk() {
 	// Step 8: Initialize the ChannelManager
 	let mut user_config = UserConfig::default();
 
+	// Adam: wait for 1 confirmation only instead of default 6
+	let min_confirmations = 1;
+	user_config.channel_handshake_config.minimum_depth = min_confirmations;
 	// Adam: route to private
 	user_config.accept_forwards_to_priv_channels = true;
 
