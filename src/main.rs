@@ -236,8 +236,12 @@ async fn handle_ldk_events(
 				}
 			}
 		}
-		Event::OpenChannelRequest { .. } => {
-			// Unreachable, we don't set manually_accept_inbound_channels
+		Event::OpenChannelRequest {temporary_channel_id, counterparty_node_id, ../*funding_satoshis, push_msat, channel_type*/} => {
+			// TODO check channel_type
+			channel_manager.accept_inbound_channel_from_trusted_peer_0conf(&temporary_channel_id, counterparty_node_id, 0).unwrap();
+			print!("\nEVENT:  OpenChannelRequest:  accepted zeroconf channel");
+			print!("> ");
+			io::stdout().flush().unwrap();
 		}
 		Event::PaymentPathSuccessful { .. } => {}
 		Event::PaymentPathFailed { .. } => {}
@@ -462,6 +466,10 @@ async fn start_ldk() {
 	// Adam: wait for 1 confirmation only instead of default 6
 	let min_confirmations = 1;
 	user_config.channel_handshake_config.minimum_depth = min_confirmations;
+	// Adam: use zeroconf
+	//user_config.channel_handshake_limits.trust_own_funding_0conf = true;
+	// Adam: manual confirmation needed for zeroconf
+	user_config.manually_accept_inbound_channels = true;
 	// Adam: route to private
 	user_config.accept_forwards_to_priv_channels = true;
 

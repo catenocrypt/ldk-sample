@@ -589,6 +589,10 @@ fn open_channel(
 
 	let config = UserConfig {
 		channel_handshake_limits: ChannelHandshakeLimits {
+
+			// Adam: use zeroconf
+			trust_own_funding_0conf: true,
+
 			// lnd's max to_self_delay is 2016, so we want to be compatible.
 			their_to_self_delay: 2016,
 			..Default::default()
