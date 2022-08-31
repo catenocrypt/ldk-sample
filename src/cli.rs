@@ -161,6 +161,52 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 		if let Some(word) = words.next() {
 			match word {
 				"help" => help(),
+				// Adam: prepared, 'canned' openchannel to WNode
+				"oc" => {
+					// hardcoded peer
+					let peer_pubkey_and_ip_addr = "030245e125869603614f619ea3fc8921144de191fe9348c1aafc69fc87a8384e9f@127.0.0.1:9745";
+					let channel_value_sat = words.next();
+					if channel_value_sat.is_none() {
+						println!("ERROR: oc has 1 required arguments: `oc channel_amt_satoshis`");
+						continue;
+					}
+					let (pubkey, peer_addr) =
+						match parse_peer_info(peer_pubkey_and_ip_addr.to_string()) {
+							Ok(info) => info,
+							Err(e) => {
+								println!("{:?}", e.into_inner().unwrap());
+								continue;
+							}
+						};
+
+					let chan_amt_sat: Result<u64, _> = channel_value_sat.unwrap().parse();
+					if chan_amt_sat.is_err() {
+						println!("ERROR: channel amount must be a number");
+						continue;
+					}
+
+					if connect_peer_if_necessary(pubkey, peer_addr, peer_manager.clone())
+						.await
+						.is_err()
+					{
+						continue;
+					};
+
+					if open_channel(
+						pubkey,
+						chan_amt_sat.unwrap(),
+						false, // private
+						channel_manager.clone(),
+					)
+					.is_ok()
+					{
+						let peer_data_path = format!("{}/channel_peer_data", ldk_data_dir.clone());
+						let _ = disk::persist_channel_peer(
+							Path::new(&peer_data_path),
+							peer_pubkey_and_ip_addr,
+						);
+					}
+				}
 				"openchannel" => {
 					let peer_pubkey_and_ip_addr = words.next();
 					let channel_value_sat = words.next();
@@ -423,6 +469,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 }
 
 fn help() {
+	println!("oc <amt_satoshis>"); // Adam
 	println!("openchannel pubkey@host:port <amt_satoshis> [--public]");
 	println!("sendpayment <invoice>");
 	println!("keysend <dest_pubkey> <amt_msats>");
