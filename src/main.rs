@@ -466,12 +466,8 @@ async fn start_ldk() {
 	// Adam: wait for 1 confirmation only instead of default 6
 	let min_confirmations = 1;
 	user_config.channel_handshake_config.minimum_depth = min_confirmations;
-	// Adam: use zeroconf
-	//user_config.channel_handshake_limits.trust_own_funding_0conf = true;
 	// Adam: manual confirmation needed for zeroconf
 	user_config.manually_accept_inbound_channels = true;
-	// Adam: route to private
-	user_config.accept_forwards_to_priv_channels = true;
 
 	user_config.channel_handshake_limits.force_announced_channel_preference = false;
 	let mut restarting_node = true;
