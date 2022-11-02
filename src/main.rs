@@ -12,6 +12,7 @@ mod convert;
 mod disk;
 mod hex_utils;
 
+use crate::cli::print_status_balance;
 use crate::bitcoind_client::BitcoindClient;
 use crate::disk::FilesystemLogger;
 use bitcoin::blockdata::constants::genesis_block;
@@ -28,7 +29,7 @@ use lightning::chain::chainmonitor;
 use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
 use lightning::chain::keysinterface::SpendableOutputDescriptor::*;
 use lightning::chain::{BestBlock, Filter, Watch};
-use lightning::chain::channelmonitor::Balance;
+//use lightning::chain::channelmonitor::Balance;
 use lightning::ln::channelmanager;
 use lightning::ln::channelmanager::{
 	ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager,
@@ -406,37 +407,6 @@ async fn handle_ldk_events(
 	}
 }
 
-fn print_balances(name: &str, balances: &Vec<Balance>) {
-	print!("Balances in {}: ({})   ", name, balances.len());
-	for b in balances {
-		let bal = match b {
-			Balance::ClaimableOnChannelClose{ claimable_amount_satoshis } => claimable_amount_satoshis,
-			Balance::ClaimableAwaitingConfirmations { claimable_amount_satoshis, confirmation_height: _ } => claimable_amount_satoshis,
-			Balance::ContentiousClaimable { claimable_amount_satoshis, timeout_height: _ } => claimable_amount_satoshis,
-			Balance::MaybeClaimableHTLCAwaitingTimeout { claimable_amount_satoshis, claimable_height: _ } => claimable_amount_satoshis,
-		};
-		print!("{} ", bal);
-	}
-	println!("");
-}
-
-fn list_channels(channel_manager: &ChannelManager) {
-	let channels = &channel_manager.list_channels();
-	if channels.len() == 0 {
-		println!("No open channels");
-		return;
-	}
-	for c in channels {
-		println!("{} open channels:", channels.len());
-		print!("  val {}  bal {}  ", c.channel_value_satoshis, c.balance_msat);
-		match c.short_channel_id {
-			Some(id) => { print!("{} ", id); },
-			None => {},
-		};
-		println!("");
-	}
-}
-
 async fn start_ldk() {
 	let env = env::env_init();
 	env.print();
@@ -659,13 +629,7 @@ async fn start_ldk() {
 	}
 
 
-	list_channels(&channel_manager);
-	let balances = chain_monitor.get_claimable_balances(&[]);
-	print_balances("chain_monitor", &balances);
-	for (_, channel_monitor) in channelmonitors.iter_mut() {
-		let balances = channel_monitor.get_claimable_balances();
-		print_balances("channel", &balances);
-	}
+	print_status_balance(&channel_manager, &chain_monitor, &mut channelmonitors);
 
 
 	// Step 11: Optional: Initialize the P2PGossipSync
@@ -872,6 +836,8 @@ async fn start_ldk() {
 		Arc::clone(&invoice_payer),
 		Arc::clone(&peer_manager),
 		Arc::clone(&channel_manager),
+		Arc::clone(&chain_monitor),
+		&channelmonitors,
 		Arc::clone(&keys_manager),
 		Arc::clone(&network_graph),
 		inbound_payments,

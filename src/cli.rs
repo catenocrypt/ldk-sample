@@ -4,11 +4,14 @@ use crate::{
 	ChannelManager, HTLCStatus, InvoicePayer, MillisatAmount, NetworkGraph, PaymentInfo,
 	PaymentInfoStorage, PeerManager,
 };
+use crate::ChainMonitor;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::Hash;
+use bitcoin::BlockHash;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
-use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient};
+use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient, InMemorySigner};
+use lightning::chain::channelmonitor::{Balance, ChannelMonitor};
 //use lightning::ln::msgs::NetAddress;
 use lightning::ln::{PaymentHash, PaymentPreimage};
 use lightning::routing::gossip::NodeId;
@@ -73,6 +76,49 @@ pub(crate) fn handle_import_wallet(network: Network) -> bool {
     wallet.print_address();
 
 	is_import
+}
+
+// Print out current status, balances, channels, etc.
+pub(crate) fn print_status_balance(channel_manager: &ChannelManager, chain_monitor: &ChainMonitor, channelmonitors: &Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>) {
+	list_channel_balances(&channel_manager);
+
+	let balances = chain_monitor.get_claimable_balances(&[]);
+	print_balances("chain_monitor", &balances);
+	for (_, channel_monitor) in channelmonitors.iter() {
+		let balances = channel_monitor.get_claimable_balances();
+		print_balances("channel", &balances);
+	}	
+}
+
+fn print_balances(name: &str, balances: &Vec<Balance>) {
+	print!("Balances in {}: ({})   ", name, balances.len());
+	for b in balances {
+		let bal = match b {
+			Balance::ClaimableOnChannelClose{ claimable_amount_satoshis } => claimable_amount_satoshis,
+			Balance::ClaimableAwaitingConfirmations { claimable_amount_satoshis, confirmation_height: _ } => claimable_amount_satoshis,
+			Balance::ContentiousClaimable { claimable_amount_satoshis, timeout_height: _ } => claimable_amount_satoshis,
+			Balance::MaybeClaimableHTLCAwaitingTimeout { claimable_amount_satoshis, claimable_height: _ } => claimable_amount_satoshis,
+		};
+		print!("{} ", bal);
+	}
+	println!("");
+}
+
+fn list_channel_balances(channel_manager: &ChannelManager) {
+	let channels = &channel_manager.list_channels();
+	if channels.len() == 0 {
+		println!("No open channels");
+		return;
+	}
+	for c in channels {
+		println!("{} open channels:", channels.len());
+		print!("  val {}  bal {}  ", c.channel_value_satoshis, c.balance_msat);
+		match c.short_channel_id {
+			Some(id) => { print!("{} ", id); },
+			None => {},
+		};
+		println!("");
+	}
 }
 
 /*
@@ -222,7 +268,10 @@ async fn perform_open_channel(peer_manager: &Arc<PeerManager>, channel_manager: 
 
 pub(crate) async fn poll_for_user_input<E: EventHandler>(
 	invoice_payer: Arc<InvoicePayer<E>>, peer_manager: Arc<PeerManager>,
-	channel_manager: Arc<ChannelManager>, keys_manager: Arc<KeysManager>,
+	channel_manager: Arc<ChannelManager>, 
+	chain_monitor: Arc<ChainMonitor>, // needed for balances
+	channelmonitors: &Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>, // needed for balances
+	keys_manager: Arc<KeysManager>,
 	network_graph: Arc<NetworkGraph>, inbound_payments: PaymentInfoStorage,
 	outbound_payments: PaymentInfoStorage, ldk_data_dir: String, network: Network, env: &Env
 ) {
@@ -242,6 +291,29 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 		if let Some(word) = words.next() {
 			match word {
 				"help" => help(),
+
+				"opendc" => {
+					let peer_pubkey_and_ip_addr = env.default_peer.as_str();
+					if peer_pubkey_and_ip_addr == "" {
+						println!("ERROR: default peer is unset (see .env)");
+						continue;
+					}
+					let channel_value_sat = words.next();
+					let announce_channel = true; // public TODO
+					if channel_value_sat.is_none() {
+						println!("ERROR: opendc has 1 required argument: `opendc channel_amt_satoshis`");
+						continue;
+					}
+					//let peer_pubkey_and_ip_addr = peer_pubkey_and_ip_addr.unwrap();
+
+					perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, channel_value_sat.unwrap(), announce_channel).await;
+					continue;
+				}
+
+				"status" => {
+					print_status_balance(&channel_manager, &chain_monitor, &channelmonitors);
+				}
+
 				"openchannel" => {
 					let peer_pubkey_and_ip_addr = words.next();
 					let channel_value_sat = words.next();
@@ -262,24 +334,6 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 					//let peer_pubkey_and_ip_addr = peer_pubkey_and_ip_addr.unwrap();
 
 					perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr.unwrap(), channel_value_sat.unwrap(), announce_channel).await;
-					continue;
-				}
-
-				"opendc" => {
-					let peer_pubkey_and_ip_addr = env.default_peer.as_str();
-					if peer_pubkey_and_ip_addr == "" {
-						println!("ERROR: default peer is unset (see .env)");
-						continue;
-					}
-					let channel_value_sat = words.next();
-					let announce_channel = true; // public TODO
-					if channel_value_sat.is_none() {
-						println!("ERROR: opendc has 1 required argument: `opendc channel_amt_satoshis`");
-						continue;
-					}
-					//let peer_pubkey_and_ip_addr = peer_pubkey_and_ip_addr.unwrap();
-
-					perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, channel_value_sat.unwrap(), announce_channel).await;
 					continue;
 				}
 
@@ -392,7 +446,9 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 						println!("SUCCESS: connected to peer {}", pubkey);
 					}
 				}
+
 				"listchannels" => list_channels(&channel_manager, &network_graph),
+
 				"listpayments" => {
 					list_payments(inbound_payments.clone(), outbound_payments.clone())
 				}
@@ -492,6 +548,8 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 
 fn help() {
 	println!("opendc <amt_satoshis>               // open default channel");
+	println!("status");
+	println!("");
 	println!("openchannel pubkey@host:port <amt_satoshis> [--public]");
 	println!("sendpayment <invoice>");
 	println!("keysend <dest_pubkey> <amt_msats>");
