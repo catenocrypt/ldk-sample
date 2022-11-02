@@ -129,7 +129,7 @@ pub(crate) type NetworkGraph = gossip::NetworkGraph<Arc<FilesystemLogger>>;
 
 async fn handle_ldk_events(
 	channel_manager: &Arc<ChannelManager>,
-	wallet: &Wallet,
+	wallet: &Arc<Wallet>,
 	bitcoind_client: &BitcoindClient,
 	network_graph: &NetworkGraph, keys_manager: &KeysManager,
 	inbound_payments: &PaymentInfoStorage, outbound_payments: &PaymentInfoStorage,
@@ -482,7 +482,7 @@ async fn start_ldk() {
 	if wallet.balance <= 0.0 {
 		println!("WARNING: Wallet has empty balance! Send some funds to the wallet ({})", wallet.address);
 	}
-
+	let wallet_ptr = Arc::new(wallet);
 
 
 	// ## Setup
@@ -629,7 +629,7 @@ async fn start_ldk() {
 	}
 
 
-	print_status_balance(&channel_manager, &chain_monitor, &mut channelmonitors);
+	print_status_balance(&channel_manager, &chain_monitor, &channelmonitors);
 
 
 	// Step 11: Optional: Initialize the P2PGossipSync
@@ -719,10 +719,11 @@ async fn start_ldk() {
 	let bitcoind_rpc = bitcoind_client.clone();
 	let network_graph_events = network_graph.clone();
 	let handle = tokio::runtime::Handle::current();
+	let wallet_ptr_clone = wallet_ptr.clone();
 	let event_handler = move |event: &Event| {
 		handle.block_on(handle_ldk_events(
 			&channel_manager_event_listener,
-			&wallet,
+			&wallet_ptr_clone,
 			&bitcoind_rpc,
 			&network_graph_events,
 			&keys_manager_listener,
@@ -837,8 +838,9 @@ async fn start_ldk() {
 		Arc::clone(&peer_manager),
 		Arc::clone(&channel_manager),
 		Arc::clone(&chain_monitor),
-		&channelmonitors,
+		Arc::new(channelmonitors),
 		Arc::clone(&keys_manager),
+		&wallet_ptr.clone(),
 		Arc::clone(&network_graph),
 		inbound_payments,
 		outbound_payments,

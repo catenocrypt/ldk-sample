@@ -266,12 +266,77 @@ async fn perform_open_channel(peer_manager: &Arc<PeerManager>, channel_manager: 
 	}
 }
 
+// Check if auto channel should/could be done, returns:
+// - channel open is needed
+// - channel open is possible
+// - open channel amount
+// - use max amount
+fn auto_channel_open_check(send_amount: u64, wallet: &Wallet, channel_manager: &ChannelManager) -> (bool, bool, u64, bool) {
+	// Very strict minimum amount: 10% higher than send amount for lightning reserver
+	let strict_min = (send_amount as f64 * 1.10).ceil() as u64 + 1000;
+	// optimal amount: higher than send amount, to have higher capacity
+	let optimal: u64 =  strict_min + (send_amount as f64 * 0.20).ceil() as u64;
+	// a bit highre to incorp. fee safety
+	let fee_buffer: u64 = (send_amount as f64 * 0.02).ceil() as u64 + 2000;
+
+	// check avail. lightning balance
+	let channels = &channel_manager.list_channels();
+	let mut sum_balance = 0;
+	for c in channels {
+		sum_balance += c.balance_msat;
+	}
+
+	if sum_balance >= strict_min {
+		// we are fine, enough ln balance
+		return (false, false, 0, false);
+	}
+
+	// assume wallet L1 balance is up to date
+	let l1_balance: u64 = (wallet.balance * 1.0 / 100_000_000.0).floor() as u64;
+	if l1_balance > optimal + fee_buffer {
+		// we should open
+		return (true, true, optimal, false)
+	}
+	if l1_balance > strict_min + fee_buffer{
+		// we should open, with all available
+		return (true, true, l1_balance, true)
+	}
+
+	// not enough balance
+	(true, false, optimal, false)
+}
+
+// Open channel if needed
+async fn auto_channel_open(send_amount: u64, wallet: &Wallet, peer_manager: &Arc<PeerManager>, channel_manager: &Arc<ChannelManager>, ldk_data_dir: String, env: &Env) {
+	let (open_needed, open_possible, open_amount, _use_max_amount) = auto_channel_open_check(send_amount, &wallet, &channel_manager);
+	if !open_needed {
+		// fine, no open needed
+		return;
+	}
+	if !open_possible {
+		println!("Warning: A new channel should be opened, but there is not enough balance for that.");
+		return;
+	}
+
+	// perform auto open
+	let peer_pubkey_and_ip_addr = env.default_peer.as_str();
+	if peer_pubkey_and_ip_addr == "" {
+		println!("ERROR: default peer is unset (see .env)");
+		return;
+	}
+
+	println!("AUTO OPENING channel to default peer with capacity {} (to pay: {})", open_amount, send_amount);
+	let announce_channel = true; // public TODO
+	perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, open_amount.to_string().as_str(), announce_channel).await;
+}
+
 pub(crate) async fn poll_for_user_input<E: EventHandler>(
 	invoice_payer: Arc<InvoicePayer<E>>, peer_manager: Arc<PeerManager>,
 	channel_manager: Arc<ChannelManager>, 
 	chain_monitor: Arc<ChainMonitor>, // needed for balances
-	channelmonitors: &Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>, // needed for balances
+	channelmonitors: Arc<Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>>, // needed for balances
 	keys_manager: Arc<KeysManager>,
+	wallet: &Arc<Wallet>,
 	network_graph: Arc<NetworkGraph>, inbound_payments: PaymentInfoStorage,
 	outbound_payments: PaymentInfoStorage, ldk_data_dir: String, network: Network, env: &Env
 ) {
@@ -308,6 +373,29 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 
 					perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, channel_value_sat.unwrap(), announce_channel).await;
 					continue;
+				}
+
+				"pay" => {
+					let invoice_str = words.next();
+					if invoice_str.is_none() {
+						println!("ERROR: sendpayment requires an invoice: `sendpayment <invoice>`");
+						continue;
+					}
+
+					let invoice = match Invoice::from_str(invoice_str.unwrap()) {
+						Ok(inv) => inv,
+						Err(e) => {
+							println!("ERROR: invalid invoice: {:?}", e);
+							continue;
+						}
+					};
+					let send_amount = invoice.amount_milli_satoshis().unwrap();
+
+					auto_channel_open(send_amount, &wallet, &peer_manager, &channel_manager, ldk_data_dir.clone(), env).await;
+
+					println!("Invoice with amount {} msats, paying ...", send_amount);
+
+					send_payment(&*invoice_payer, &invoice, outbound_payments.clone());
 				}
 
 				"status" => {
@@ -355,6 +443,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 
 					send_payment(&*invoice_payer, &invoice, outbound_payments.clone());
 				}
+
 				"keysend" => {
 					let dest_pubkey = match words.next() {
 						Some(dest) => match hex_utils::to_compressed_pubkey(dest) {
