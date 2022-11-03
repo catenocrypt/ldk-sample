@@ -79,7 +79,11 @@ pub(crate) fn handle_import_wallet(network: Network) -> bool {
 }
 
 // Print out current status, balances, channels, etc.
-pub(crate) fn print_status_balance(channel_manager: &ChannelManager, chain_monitor: &ChainMonitor, channelmonitors: &Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>) {
+pub(crate) fn print_status_balance(wallet: &Arc<Wallet>, channel_manager: &ChannelManager, chain_monitor: &ChainMonitor, channelmonitors: &Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>, include_l1: bool) {
+	if include_l1 {
+		wallet.print();
+	}
+
 	list_channel_balances(&channel_manager);
 
 	let balances = chain_monitor.get_claimable_balances(&[]);
@@ -271,13 +275,13 @@ async fn perform_open_channel(peer_manager: &Arc<PeerManager>, channel_manager: 
 // - channel open is possible
 // - open channel amount
 // - use max amount
-fn auto_channel_open_check(send_amount: u64, wallet: &Wallet, channel_manager: &ChannelManager) -> (bool, bool, u64, bool) {
+fn auto_channel_open_check(send_amount_sat: f64, wallet: &Wallet, channel_manager: &ChannelManager) -> (bool, bool, u64, bool) {
 	// Very strict minimum amount: 10% higher than send amount for lightning reserver
-	let strict_min = (send_amount as f64 * 1.10).ceil() as u64 + 1000;
+	let strict_min = (send_amount_sat * 1.10).ceil() as u64 + 1000;
 	// optimal amount: higher than send amount, to have higher capacity
-	let optimal: u64 =  strict_min + (send_amount as f64 * 0.20).ceil() as u64;
+	let optimal: u64 =  strict_min + (send_amount_sat * 0.20).ceil() as u64;
 	// a bit highre to incorp. fee safety
-	let fee_buffer: u64 = (send_amount as f64 * 0.02).ceil() as u64 + 2000;
+	let fee_buffer: u64 = (send_amount_sat * 0.02).ceil() as u64 + 2000;
 
 	// check avail. lightning balance
 	let channels = &channel_manager.list_channels();
@@ -292,7 +296,7 @@ fn auto_channel_open_check(send_amount: u64, wallet: &Wallet, channel_manager: &
 	}
 
 	// assume wallet L1 balance is up to date
-	let l1_balance: u64 = (wallet.balance * 1.0 / 100_000_000.0).floor() as u64;
+	let l1_balance = (wallet.balance * 100_000_000.0).floor() as u64;
 	if l1_balance > optimal + fee_buffer {
 		// we should open
 		return (true, true, optimal, false)
@@ -308,13 +312,14 @@ fn auto_channel_open_check(send_amount: u64, wallet: &Wallet, channel_manager: &
 
 // Open channel if needed
 async fn auto_channel_open(send_amount: u64, wallet: &Wallet, peer_manager: &Arc<PeerManager>, channel_manager: &Arc<ChannelManager>, ldk_data_dir: String, env: &Env) {
-	let (open_needed, open_possible, open_amount, _use_max_amount) = auto_channel_open_check(send_amount, &wallet, &channel_manager);
+	let send_amount_sat = send_amount as f64 * 0.001;
+	let (open_needed, open_possible, open_amount, _use_max_amount) = auto_channel_open_check(send_amount_sat, &wallet, &channel_manager);
 	if !open_needed {
 		// fine, no open needed
 		return;
 	}
 	if !open_possible {
-		println!("Warning: A new channel should be opened, but there is not enough balance for that.");
+		println!("Warning: A new channel should be opened, but there is not enough balance for that. Pay {}", send_amount_sat);
 		return;
 	}
 
@@ -325,7 +330,7 @@ async fn auto_channel_open(send_amount: u64, wallet: &Wallet, peer_manager: &Arc
 		return;
 	}
 
-	println!("AUTO OPENING channel to default peer with capacity {} (to pay: {})", open_amount, send_amount);
+	println!("AUTO OPENING channel to default peer with capacity {} (to pay: {}, l1 bal: {})", open_amount, send_amount_sat, wallet.balance * 100_000_000.0);
 	let announce_channel = true; // public TODO
 	perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, open_amount.to_string().as_str(), announce_channel).await;
 }
@@ -378,7 +383,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 				"pay" => {
 					let invoice_str = words.next();
 					if invoice_str.is_none() {
-						println!("ERROR: sendpayment requires an invoice: `sendpayment <invoice>`");
+						println!("ERROR: pay requires an invoice: `pay <invoice>`");
 						continue;
 					}
 
@@ -399,7 +404,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 				}
 
 				"status" => {
-					print_status_balance(&channel_manager, &chain_monitor, &channelmonitors);
+					print_status_balance(&wallet, &channel_manager, &chain_monitor, &channelmonitors, true);
 				}
 
 				"openchannel" => {
@@ -637,6 +642,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 
 fn help() {
 	println!("opendc <amt_satoshis>               // open default channel");
+	println!("pay <invoice>");
 	println!("status");
 	println!("");
 	println!("openchannel pubkey@host:port <amt_satoshis> [--public]");

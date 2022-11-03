@@ -513,6 +513,7 @@ async fn start_ldk() {
 	));
 
 	// Step 6: Initialize the KeysManager
+	//println!("step 6");
 
 	// The key seed that we use to derive the node privkey (that corresponds to the node pubkey) and
 	// other secret key material.
@@ -544,6 +545,7 @@ async fn start_ldk() {
 	let mut channelmonitors = persister.read_channelmonitors(keys_manager.clone()).unwrap();
 
 	// Step 8: Initialize the ChannelManager
+	//println!("step 8");
 	let mut user_config = UserConfig::default();
 	user_config.channel_handshake_limits.force_announced_channel_preference = false;
 	let mut restarting_node = true;
@@ -589,6 +591,7 @@ async fn start_ldk() {
 	};
 
 	// Step 9: Sync ChannelMonitors and ChannelManager to chain tip
+	//println!("step 9");
 	let mut chain_listener_channel_monitors = Vec::new();
 	let mut cache = UnboundedCache::new();
 	let mut chain_tip: Option<poll::ValidatedBlockHeader> = None;
@@ -622,6 +625,7 @@ async fn start_ldk() {
 	}
 
 	// Step 10: Give ChannelMonitors to ChainMonitor
+	//println!("step 10");
 	for item in chain_listener_channel_monitors.drain(..) {
 		let channel_monitor = item.1 .0;
 		let funding_outpoint = item.2;
@@ -629,7 +633,7 @@ async fn start_ldk() {
 	}
 
 
-	print_status_balance(&channel_manager, &chain_monitor, &channelmonitors);
+	print_status_balance(&wallet_ptr, &channel_manager, &chain_monitor, &channelmonitors, false);
 
 
 	// Step 11: Optional: Initialize the P2PGossipSync

@@ -166,6 +166,7 @@ impl Wallet {
         signing_input.coin_type = 0;
         signing_input.private_key.push(self.private_key.clone());
 
+        let mut sum_amount: i64 = 0;
         for u in &self.utxos.utxos {
             if u.address != self.address {
                 println!("discarding utxo, not own-address {} {}", u.address, self.address);
@@ -179,14 +180,19 @@ impl Wallet {
                 outpoint.sequence = u32::MAX - 1;
                 utxo.out_point = ::protobuf::MessageField::some(outpoint);
                 utxo.script = hex::decode(&u.script_pub_key).unwrap();
-                utxo.amount = (u.amount * 100_000_000.0) as i64;
+                let amount_sat = (u.amount * 100_000_000.0) as i64;
+                utxo.amount = amount_sat;
                 println!("input utxo  '{}' '{}' '{}' {}", u.address, u.script_pub_key, u.witness_script, utxo.amount);
                 signing_input.utxo.push(utxo);
+                sum_amount += amount_sat;
             }
         }
         if signing_input.utxo.len() == 0 {
             println!("Error: 0 utxos to consider");
             return Vec::new();
+        }
+        if signing_input.amount - 1 >= sum_amount {
+            signing_input.use_max_amount = true;
         }
 
         let input_ser = signing_input.write_to_bytes().unwrap();
