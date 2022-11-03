@@ -277,11 +277,11 @@ async fn perform_open_channel(peer_manager: &Arc<PeerManager>, channel_manager: 
 // - use max amount
 fn auto_channel_open_check(send_amount_sat: f64, wallet: &Wallet, channel_manager: &ChannelManager) -> (bool, bool, u64, bool) {
 	// Very strict minimum amount: 10% higher than send amount for lightning reserver
-	let strict_min = (send_amount_sat * 1.10).ceil() as u64 + 1000;
+	let strict_min = (send_amount_sat * 1.13).ceil() as u64 + 4000;
 	// optimal amount: higher than send amount, to have higher capacity
-	let optimal: u64 =  strict_min + (send_amount_sat * 0.20).ceil() as u64;
-	// a bit highre to incorp. fee safety
-	let fee_buffer: u64 = (send_amount_sat * 0.02).ceil() as u64 + 2000;
+	let optimal: u64 =  strict_min + (send_amount_sat * 0.25).ceil() as u64 + 2000;
+	// a bit highre to incorp. fee safely
+	let fee_buffer: u64 = (send_amount_sat * 0.01).ceil() as u64 + 2000;
 
 	// check avail. lightning balance
 	let channels = &channel_manager.list_channels();
@@ -333,6 +333,10 @@ async fn auto_channel_open(send_amount: u64, wallet: &Wallet, peer_manager: &Arc
 	println!("AUTO OPENING channel to default peer with capacity {} (to pay: {}, l1 bal: {})", open_amount, send_amount_sat, wallet.balance * 100_000_000.0);
 	let announce_channel = true; // public TODO
 	perform_open_channel(&peer_manager, &channel_manager, ldk_data_dir.as_str(), &peer_pubkey_and_ip_addr, open_amount.to_string().as_str(), announce_channel).await;
+
+	// TODO waiting a hardcoded amount, until channel is openeded
+	println!("Waiting for channel opening ...");
+	std::thread::sleep(std::time::Duration::from_millis(10000));
 }
 
 pub(crate) async fn poll_for_user_input<E: EventHandler>(

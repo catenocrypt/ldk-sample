@@ -182,7 +182,7 @@ impl Wallet {
                 utxo.script = hex::decode(&u.script_pub_key).unwrap();
                 let amount_sat = (u.amount * 100_000_000.0) as i64;
                 utxo.amount = amount_sat;
-                println!("input utxo  '{}' '{}' '{}' {}", u.address, u.script_pub_key, u.witness_script, utxo.amount);
+                //println!("input utxo  '{}' '{}' '{}' {}", u.address, u.script_pub_key, u.witness_script, utxo.amount);
                 signing_input.utxo.push(utxo);
                 sum_amount += amount_sat;
             }
@@ -202,9 +202,9 @@ impl Wallet {
 
         let outputp: Bitcoin::SigningOutput = protobuf::Message::parse_from_bytes(&output_ser_data.to_vec()).unwrap();
 
-        println!("tx encoded: {}", hex::encode(outputp.encoded.clone()));
+        //println!("tx encoded: {}", hex::encode(outputp.encoded.clone()));
         println!("tx tx_id:   {}", outputp.transaction_id);
-        println!("tx error:   {} {}", outputp.error.unwrap() as u16, outputp.error_message);
+        //println!("tx error:   {} {}", outputp.error.unwrap() as u16, outputp.error_message);
 
         outputp.encoded
     }
