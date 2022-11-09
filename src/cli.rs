@@ -10,7 +10,8 @@ use bitcoin::hashes::Hash;
 use bitcoin::BlockHash;
 use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
-use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient, InMemorySigner};
+//use lightning::chain::keysinterface::{KeysInterface, KeysManager, Recipient, InMemorySigner};
+use lightning::chain::keysinterface::{KeysInterface, Recipient, InMemorySigner};
 use lightning::chain::channelmonitor::{Balance, ChannelMonitor};
 //use lightning::ln::msgs::NetAddress;
 use lightning::ln::{PaymentHash, PaymentPreimage};
@@ -344,7 +345,7 @@ pub(crate) async fn poll_for_user_input<E: EventHandler>(
 	channel_manager: Arc<ChannelManager>, 
 	chain_monitor: Arc<ChainMonitor>, // needed for balances
 	channelmonitors: Arc<Vec<(BlockHash, ChannelMonitor<InMemorySigner>)>>, // needed for balances
-	keys_manager: Arc<KeysManager>,
+	keys_manager: Arc<WalletKeysManager>,
 	wallet: &Arc<Wallet>,
 	network_graph: Arc<NetworkGraph>, inbound_payments: PaymentInfoStorage,
 	outbound_payments: PaymentInfoStorage, ldk_data_dir: String, network: Network, env: &Env
@@ -936,7 +937,7 @@ fn keysend<E: EventHandler, K: KeysInterface>(
 
 fn get_invoice(
 	amt_msat: u64, payment_storage: PaymentInfoStorage, channel_manager: Arc<ChannelManager>,
-	keys_manager: Arc<KeysManager>, network: Network, expiry_secs: u32,
+	keys_manager: Arc<WalletKeysManager>, network: Network, expiry_secs: u32,
 ) {
 	let mut payments = payment_storage.lock().unwrap();
 	let currency = match network {

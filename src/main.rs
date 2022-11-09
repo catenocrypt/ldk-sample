@@ -26,15 +26,18 @@ use bitcoin_bech32::WitnessProgram;
 use lightning::chain;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
 use lightning::chain::chainmonitor;
-use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
+//use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, KeysManager, Recipient};
+use lightning::chain::keysinterface::{InMemorySigner, KeysInterface, Recipient};
 use lightning::chain::keysinterface::SpendableOutputDescriptor::*;
 use lightning::chain::{BestBlock, Filter, Watch};
 //use lightning::chain::channelmonitor::Balance;
 use lightning::ln::channelmanager;
 use lightning::ln::channelmanager::{
-	ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager,
+	//ChainParameters, ChannelManagerReadArgs, SimpleArcChannelManager,
+	ChainParameters, ChannelManagerReadArgs,
 };
-use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+//use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
+use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler};
 use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::routing::gossip;
 use lightning::routing::gossip::{NodeId, P2PGossipSync};
@@ -103,7 +106,33 @@ type ChainMonitor = chainmonitor::ChainMonitor<
 	Arc<FilesystemPersister>,
 >;
 
-pub(crate) type PeerManager = SimpleArcPeerManager<
+// Channel manager with concrete types,
+// corresponds to SimpleArcChannelManager, but has overwritten WalletKeysManager instead of KeysManager
+type ConcreteChannelManager<M, T, F, L> = lightning::ln::channelmanager::ChannelManager<
+	InMemorySigner,
+	Arc<M>,
+	Arc<T>,
+	Arc<WalletKeysManager>,
+	Arc<F>,
+	Arc<L>
+>;
+
+// PeerManager with concrete types,
+// corresponds to SimpleArcPeerManager, but has ConcreteChannelManager (with WalletKeysManager) instead of SimpleArcChannelManager
+type ConcretePeerManager<SD, M, T, F, C, L> = lightning::ln::peer_handler::PeerManager<
+	SD, 
+	Arc<ConcreteChannelManager<M, T, F, L>>,
+	Arc<lightning::routing::gossip::P2PGossipSync<
+		Arc<lightning::routing::gossip::NetworkGraph<Arc<L>>>,
+		Arc<C>,
+		Arc<L>
+	>>,
+	Arc<L>,
+	Arc<IgnoringMessageHandler>
+>;
+
+//pub(crate) type PeerManager = SimpleArcPeerManager<
+pub(crate) type PeerManager = ConcretePeerManager<
 	SocketDescriptor,
 	ChainMonitor,
 	BitcoindClient,
@@ -113,7 +142,8 @@ pub(crate) type PeerManager = SimpleArcPeerManager<
 >;
 
 pub(crate) type ChannelManager =
-	SimpleArcChannelManager<ChainMonitor, BitcoindClient, BitcoindClient, FilesystemLogger>;
+	//SimpleArcChannelManager<ChainMonitor, BitcoindClient, BitcoindClient, FilesystemLogger>;
+	ConcreteChannelManager<ChainMonitor, BitcoindClient, BitcoindClient, FilesystemLogger>;
 
 pub(crate) type InvoicePayer<E> = payment::InvoicePayer<
 	Arc<ChannelManager>,
@@ -131,7 +161,7 @@ async fn handle_ldk_events(
 	channel_manager: &Arc<ChannelManager>,
 	wallet: &Arc<Wallet>,
 	bitcoind_client: &BitcoindClient,
-	network_graph: &NetworkGraph, keys_manager: &KeysManager,
+	network_graph: &NetworkGraph, keys_manager: &WalletKeysManager,
 	inbound_payments: &PaymentInfoStorage, outbound_payments: &PaymentInfoStorage,
 	network: Network, event: &Event,
 ) {
@@ -380,20 +410,26 @@ async fn handle_ldk_events(
 				print!("{} ", output.value);
 			}
 			println!("");
-			println!("Transferring to L1 wallet ({})", destination_address);
 
 			let tx_feerate =
 				bitcoind_client.get_est_sat_per_1000_weight(ConfirmationTarget::Normal);
-			let spending_tx = keys_manager
-				.spend_spendable_outputs(
-					output_descriptors,
-					Vec::new(),
-					destination_address.script_pubkey(),
-					tx_feerate,
-					&Secp256k1::new(),
-				)
-				.unwrap();
-			bitcoind_client.broadcast_transaction(&spending_tx);
+			//let spending_tx = keys_manager
+			match keys_manager.spend_spendable_outputs(
+				output_descriptors,
+				Vec::new(),
+				destination_address.script_pubkey(),
+				tx_feerate,
+				&Secp256k1::new(),
+			) {
+				None => println!("No tx to perform"),
+				Some(res) => match res {
+					Err(_) => println!("Error in getting tx"),
+					Ok(spending_tx) => {
+						println!("Transferring to L1 wallet ({})", destination_address);
+						bitcoind_client.broadcast_transaction(&spending_tx);
+					},
+				}
+			}
 		}
 		Event::ChannelClosed { channel_id, reason, user_channel_id: _ } => {
 			println!(
@@ -543,7 +579,7 @@ async fn start_ldk() {
 		key
 	};
 	let cur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
-	let keys_manager = Arc::new(KeysManager::new(&keys_seed, cur.as_secs(), cur.subsec_nanos()));
+	let keys_manager = Arc::new(WalletKeysManager::new(&wallet_ptr, &keys_seed, cur.as_secs(), cur.subsec_nanos()));
 
 	// Step 7: Read ChannelMonitor state from disk
 	let mut channelmonitors = persister.read_channelmonitors(keys_manager.clone()).unwrap();

@@ -4,7 +4,17 @@ use crate::walletcore_extra::*;
 use crate::convert::Unspents;
 use crate::bitcoind_client::BitcoindClient;
 use protobuf::Message;
+use lightning::chain::keysinterface::{KeysInterface, KeysManager, KeyMaterial, Recipient, InMemorySigner, SpendableOutputDescriptor};
+use lightning::chain::keysinterface::SpendableOutputDescriptor::{StaticOutput, DelayedPaymentOutput, StaticPaymentOutput};
+use lightning::ln::msgs::DecodeError;
+use lightning::ln::script::ShutdownScript;
 use bitcoin::network::constants::Network;
+use bitcoin::bech32::u5;
+use bitcoin::blockdata::script::Script;
+use bitcoin::blockdata::transaction::{Transaction, TxOut};
+use bitcoin::secp256k1::{SecretKey, Signing, Secp256k1};
+use bitcoin::secp256k1::ecdsa::RecoverableSignature;
+use std::sync::Arc;
 use std::fs;
 
 static PK_FILENAME: &str = ".pk_secret";
@@ -207,5 +217,88 @@ impl Wallet {
         //println!("tx error:   {} {}", outputp.error.unwrap() as u16, outputp.error_message);
 
         outputp.encoded
+    }
+}
+
+// Replaces KeysManager, overriding get_shutdown_scriptpubkey()
+pub struct WalletKeysManager {
+    pub keys_manager: KeysManager,
+    //wallet: Arc<Wallet>,
+    shutdown_pubkey: bitcoin::secp256k1::PublicKey,
+}
+
+impl WalletKeysManager {
+    pub fn new(wallet: &Arc<Wallet>, seed: &[u8; 32], starting_time_secs: u64, starting_time_nanos: u32) -> Self {
+        WalletKeysManager {
+            keys_manager: KeysManager::new(seed, starting_time_secs, starting_time_nanos),
+            //wallet: wallet.clone(),
+            shutdown_pubkey: bitcoin::secp256k1::PublicKey::from_slice(&wallet.public_key).unwrap(),
+        }
+    }
+
+    /*
+    fn derive_channel_keys(&self, channel_value_satoshis: u64, params: &[u8; 32]) -> InMemorySigner {
+        self.keys_manager.derive_channel_keys(channel_value_satoshis, params)
+    }
+    */
+
+    pub fn spend_spendable_outputs<C: Signing>(&self, descriptors: &[&SpendableOutputDescriptor], outputs: Vec<TxOut>, change_destination_script: Script, feerate_sat_per_1000_weight: u32, secp_ctx: &Secp256k1<C>) -> Option<Result<Transaction, ()>> {
+        let shutdown_script: Script = ShutdownScript::new_p2wpkh_from_pubkey(self.shutdown_pubkey).into_inner();
+        let mut is_any_different = false;
+		for out in descriptors {
+            let output = match out {
+                StaticOutput { outpoint: _, output } => output,
+                DelayedPaymentOutput(delayed) => &delayed.output,
+                StaticPaymentOutput(static_o) => &static_o.output,
+            };
+            is_any_different |= output.script_pubkey != shutdown_script;
+        }
+
+        if !is_any_different {
+            // output(s) is the shutdown pubkey, which does not need a sweep transfer
+            println!("Output(s) became spendable, but it is (all are) to shutdown pubkey, no sweep tx needed ({})", descriptors.len());
+            None
+        } else {
+            Some(self.keys_manager.spend_spendable_outputs(descriptors, outputs, change_destination_script, feerate_sat_per_1000_weight, secp_ctx))
+        }
+    }
+}
+
+impl KeysInterface for WalletKeysManager {
+    type Signer = InMemorySigner;
+
+	fn get_node_secret(&self, recipient: Recipient) -> Result<SecretKey, ()> {
+        self.keys_manager.get_node_secret(recipient)
+    }
+
+	fn get_destination_script(&self) -> Script {
+        self.keys_manager.get_destination_script()
+    }
+
+	fn get_shutdown_scriptpubkey(&self) -> ShutdownScript {
+        // Overriden behavior: use 'external' L1 wallet address here, instead of shutdown address derived from LDK master key
+        //self.keys_manager.get_shutdown_scriptpubkey()
+        //let pubkey = bitcoin::secp256k1::PublicKey::from_slice(&self.wallet.public_key).unwrap();
+        ShutdownScript::new_p2wpkh_from_pubkey(self.shutdown_pubkey)
+    }
+
+    fn get_channel_signer(&self, inbound: bool, channel_value_satoshis: u64) -> Self::Signer {
+        self.keys_manager.get_channel_signer(inbound, channel_value_satoshis)
+    }
+
+    fn get_secure_random_bytes(&self) -> [u8; 32] {
+        self.keys_manager.get_secure_random_bytes()
+    }
+
+	fn read_chan_signer(&self, reader: &[u8]) -> Result<Self::Signer, DecodeError> {
+        self.keys_manager.read_chan_signer(reader)
+    }
+
+	fn sign_invoice(&self, hrp_bytes: &[u8], invoice_data: &[u5], receipient: Recipient) -> Result<RecoverableSignature, ()> {
+        self.keys_manager.sign_invoice(hrp_bytes, invoice_data, receipient)
+    }
+
+	fn get_inbound_payment_key_material(&self) -> KeyMaterial {
+        self.keys_manager.get_inbound_payment_key_material()
     }
 }
