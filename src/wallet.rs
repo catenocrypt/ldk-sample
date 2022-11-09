@@ -17,7 +17,9 @@ use bitcoin::secp256k1::ecdsa::RecoverableSignature;
 use std::sync::Arc;
 use std::fs;
 
-static PK_FILENAME: &str = ".pk_secret";
+const PK_FILENAME: &str = ".pk_secret";
+const LN_SEED_DERIVATION_PATH: &str = "m/2121'/9735'/0'/0/0";
+const LN_SEED_DERIVATION_PATH_TESTNET: &str = "m/2121'/9735'/1'/0/0";
 
 pub struct Wallet {
     // own address
@@ -27,69 +29,81 @@ pub struct Wallet {
     pub public_key: Vec<u8>,
     pub utxos: Unspents,
     pub balance: f64,
+    // 32-byte seed to be used by Lightning hot wallet, derived from mnemonic in a reproducible way
+    pub seed_for_ldk: Vec<u8>,
 }
 
+// given a mnemonic derive private keys and save them
 pub fn import_wallet_mnemonic(mnemonic: &str, network: Network) -> Option<Wallet> {
     if !is_mnemonic_valid(mnemonic) {
 		println!("Mnemonic is invalid! {}", mnemonic);
 		return None;
 	}
 	println!("Mnemonic is valid");
-	let priv_key = match priv_key_from_mnemonic(mnemonic, network) {
-		None => {
-			println!("Could not derive private key");
-			return None
-		},
-		Some(pk) => pk
-	};
+    let hd_wallet = hd_wallet_create_with_mnemonic(&TWString::from_str(mnemonic), &TWString::from_str(""));
+    let priv_key = priv_key_from_hdwallet(&hd_wallet, network);
 	println!("Private key derived ({} bytes)", priv_key.len());
-	if !save_private_key(&priv_key) {
-		println!("Could not save private key");
+
+    let ldk_seed = ldk_seed_from_hdwallet(&hd_wallet, network);
+    println!("LDK seed derived ({} bytes)", ldk_seed.len());
+
+    if !save_private_keys(&priv_key, &ldk_seed) {
+		println!("Could not save private keys");
 		return None
 	}
 	// check back
-	match read_private_key() {
+	match read_private_keys() {
 		None => {
-			println!("Could not read back saved private key");
+			println!("Could not read back saved private keys");
 			return None;
 		},
-		Some(_priv_key_read_back) => println!("Private key saved"),
+		Some((_, _)) => println!("Private keys saved"),
 	}
 
-    Some(Wallet::from_pk(&priv_key, network))
+    Some(Wallet::from_pk(&priv_key, &ldk_seed, network))
 }
 
 pub fn load_wallet(network: Network) -> Option<Wallet> {
-    let pk = read_private_key();
-    match pk {
+    match read_private_keys() {
         None => {
-		    println!("Could not read wallet (private key, {})", PK_FILENAME);
+		    println!("Could not read wallet (private keys, {})", PK_FILENAME);
             return None;
         },
-        Some(key) => Some(Wallet::from_pk(&key, network)),
+        Some((key1, key2)) => Some(Wallet::from_pk(&key1, &key2, network)),
     }
 }
 
-fn read_private_key() -> Option<Vec<u8>> {
+// Read the private keys from a file, 2x32 bytes, as hex string, concatenated
+fn read_private_keys() -> Option<(Vec<u8>, Vec<u8>)> {
     let contents = fs::read_to_string(PK_FILENAME);
     match contents {
         Err(_e) => None,
-        Ok(s) => {
-            if s.len() < 64 {
+        Ok(sraw) => {
+            let s = sraw.trim();
+            if s.len() < 2*2*32 {
                 return None;
             }
-            let key_decode = hex::decode(s.trim());
-            match key_decode {
+            let key1_decode = hex::decode(s[0..2*32].to_string());
+            match key1_decode {
                 Err(_e) => None,
-                Ok(key) => Some(key)
+                Ok(key1) => {
+                    let key2_decode = hex::decode(s[2*32..2*2*32].to_string());
+                    match key2_decode {
+                        Err(_e) => None,
+                        Ok(key2) => {
+                            Some((key1, key2))
+                        },
+                    }
+                },
             }
-        }
+        },
     }
 }
 
-fn save_private_key(key: &Vec<u8>) -> bool {
-    let hex_string = hex::encode(key);
-    match fs::write(PK_FILENAME, hex_string) {
+fn save_private_keys(key1: &Vec<u8>, key2: &Vec<u8>) -> bool {
+    let hex_string1 = hex::encode(key1);
+    let hex_string2 = hex::encode(key2);
+    match fs::write(PK_FILENAME, hex_string1.to_string() + &hex_string2) {
         Err(_) => return false,
         Ok(_) => return true,
     }
@@ -99,12 +113,25 @@ pub fn is_mnemonic_valid(mnemonic: &str) -> bool {
     return mnemonic_is_valid(&TWString::from_str(mnemonic));
 }
 
-pub fn priv_key_from_mnemonic(mnemonic: &str, network: Network) -> Option<Vec<u8>> {
-    let wallet = hd_wallet_create_with_mnemonic(&TWString::from_str(mnemonic), &TWString::from_str(""));
-    let derivation_path = if network == Network::Testnet { "m/84'/1'/0'/0/0" } else { "m/84'/0'/0'/0/0" };
+pub fn priv_key_from_hdwallet_with_derivation(hd_wallet: &HDWallet, derivation_path: &str) -> Vec<u8> {
     let dp_twstring = TWString::from_str(derivation_path);
-    let key = hd_wallet_get_key(&wallet, 0, &dp_twstring);
-    Some(private_key_data(&key).to_vec())
+    let key = hd_wallet_get_key(&hd_wallet, 0, &dp_twstring);
+    private_key_data(&key).to_vec()
+}
+
+pub fn priv_key_from_hdwallet(hd_wallet: &HDWallet, network: Network) -> Vec<u8> {
+    let derivation_path = if network == Network::Testnet { "m/84'/1'/0'/0/0" } else { "m/84'/0'/0'/0/0" };
+    priv_key_from_hdwallet_with_derivation(hd_wallet, derivation_path)
+}
+
+pub fn ldk_seed_from_hdwallet(hd_wallet: &HDWallet, network: Network) -> Vec<u8> {
+    let derivation_path = if network == Network::Testnet { LN_SEED_DERIVATION_PATH_TESTNET } else { LN_SEED_DERIVATION_PATH };
+    priv_key_from_hdwallet_with_derivation(hd_wallet, derivation_path)
+}
+
+pub fn priv_key_from_mnemonic(mnemonic: &str, network: Network) -> Vec<u8> {
+    let wallet = hd_wallet_create_with_mnemonic(&TWString::from_str(mnemonic), &TWString::from_str(""));
+    priv_key_from_hdwallet(&wallet, network)
 }
 
 fn derive_pubkey_from_pk_intern(priv_key: &Vec<u8>) -> PublicKey {
@@ -130,13 +157,14 @@ pub fn derive_address_from_pk(priv_key: &Vec<u8>, network: Network) -> String {
 }
 
 impl Wallet {
-    pub fn from_pk(priv_key: &Vec<u8>, network: Network) -> Wallet {
+    pub fn from_pk(priv_key: &Vec<u8>, ldk_seed: &Vec<u8>, network: Network) -> Wallet {
         Wallet {
             address: derive_address_from_pk(priv_key, network),
             private_key: priv_key.clone(),
             public_key: derive_pubkey_from_pk(&priv_key.clone()),
             utxos: Unspents { utxos: Vec::new() },
             balance: 0.0,
+            seed_for_ldk: ldk_seed.clone(),
         }
     }
 

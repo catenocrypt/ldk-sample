@@ -59,7 +59,7 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
-use std::fs::File;
+//use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::ops::Deref;
@@ -68,6 +68,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
+use std::convert::TryInto;
 
 use crate::wallet::*;
 
@@ -447,6 +448,10 @@ async fn handle_ldk_events(
 	}
 }
 
+fn slice_to_array32(slice: &[u8]) -> [u8; 32] {
+    slice.try_into().expect("slice with incorrect length")
+}
+
 async fn start_ldk() {
 	let env = env::env_init();
 	env.print();
@@ -555,6 +560,8 @@ async fn start_ldk() {
 	// Step 6: Initialize the KeysManager
 	//println!("step 6");
 
+	// LDK seed: use seed derived from main wallet
+	/*
 	// The key seed that we use to derive the node privkey (that corresponds to the node pubkey) and
 	// other secret key material.
 	let keys_seed_path = format!("{}/keys_seed", ldk_data_dir.clone());
@@ -578,6 +585,8 @@ async fn start_ldk() {
 		}
 		key
 	};
+	*/
+	let keys_seed = slice_to_array32(wallet_ptr.clone().seed_for_ldk.as_slice());
 	let cur = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
 	let keys_manager = Arc::new(WalletKeysManager::new(&wallet_ptr, &keys_seed, cur.as_secs(), cur.subsec_nanos()));
 
