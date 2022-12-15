@@ -7,7 +7,6 @@ use std::str::FromStr;
 
 pub struct Env {
     pub network: Network,
-    pub is_testnet: bool,
     pub default_peer: String,
     pub ldk_data_dir: String,
     pub bitcoind_rpc_username: String,
@@ -39,8 +38,6 @@ pub fn env_init() -> Env {
             &_ => panic!("Unsupported network provided. Options are: `main`, `test`, `regtest`, `signet`. Got {}", val),
         },
     };
-
-    let is_testnet = network == Network::Testnet; 
 
     let rpc_host_port = env_with_no_default("RPC_HOST");
     let rpc_host_port_path: Vec<&str> = rpc_host_port.split(":").collect();
@@ -81,7 +78,6 @@ pub fn env_init() -> Env {
 
     return Env{
         network: network,
-        is_testnet: is_testnet,
         default_peer: env_with_no_default("DEFAULT_PEER"),
         ldk_data_dir: match env::var("LDK_DATA_DIR") {
             Ok(path) => path,

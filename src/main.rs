@@ -240,13 +240,17 @@ async fn handle_ldk_events(
 				hex_utils::hex_str(&payment_hash.0),
 				amount_msat,
 			);
-			print!("> ");
-			io::stdout().flush().unwrap();
 			let payment_preimage = match purpose {
-				PaymentPurpose::InvoicePayment { payment_preimage, .. } => *payment_preimage,
+				PaymentPurpose::InvoicePayment { payment_preimage, payment_secret } => {
+					print!("SECRET: payment preimage & secret  {} {}", hex::encode(payment_preimage.unwrap().0), hex::encode(payment_secret.0));
+					*payment_preimage
+				},
 				PaymentPurpose::SpontaneousPayment(preimage) => Some(*preimage),
 			};
 			channel_manager.claim_funds(payment_preimage.unwrap());
+
+			print!("> ");
+			io::stdout().flush().unwrap();
 		}
 		Event::PaymentClaimed { payment_hash, purpose, amount_msat } => {
 			println!(

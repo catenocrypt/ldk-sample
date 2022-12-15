@@ -318,7 +318,6 @@ name = "lightning"
 version = "0.0.110"
 dependencies = [
  "bitcoin",
- "hex",
 ]
 
 [[package]]

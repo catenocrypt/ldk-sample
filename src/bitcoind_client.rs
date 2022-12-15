@@ -157,6 +157,7 @@ impl BitcoindClient {
 		});
 	}
 
+	/*
 	pub fn get_new_rpc_client(&self) -> std::io::Result<RpcClient> {
 		let http_endpoint = HttpEndpoint::for_host(self.host.clone()).with_port(self.port);
 		let rpc_credentials =
@@ -164,7 +165,6 @@ impl BitcoindClient {
 		RpcClient::new(&rpc_credentials, http_endpoint)
 	}
 
-	/*
 	// Removed, tx building (for funging tx) no longer needed from Btc Core
 	pub async fn create_raw_transaction(&self, outputs: Vec<HashMap<String, f64>>) -> RawTx {
 		let outputs_json = serde_json::json!(outputs);
