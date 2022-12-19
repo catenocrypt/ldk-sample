@@ -1,4 +1,4 @@
-# TW Lightning Proto, Wallet-core/LDK
+# TW Lightning Proto, LDK
 Based on ldk-sample
 https://github.com/lightningdevkit/ldk-sample
 
@@ -6,11 +6,9 @@ https://github.com/lightningdevkit/ldk-sample
 ### Details
 
 - Proto is based on `ldk-sample`, https://github.com/lightningdevkit/ldk-sample
-- It uses:
-  - wallet-core (link with it), for address derivation and funding transaction preparation/signing, and
-  - a Btc Core node (bitcoind), external, for obtaining UTXOs and as a block source
-- It simulates a rudimentary wallet: imported from mnemonic, single address used, private key stored.
-- At channel open, funding tx is created, from wallet address, using wallet-core
+- It uses a Btc Core node (bitcoind), external, for obtaining UTXOs and as a block source
+- It simulates a rudimentary wallet: imported from mnemonic, single P2WPKH address used, private key stored.
+- At channel open, funding tx is created, from wallet address
 - When funds are no longer used by LDK, and become spendable, transfers them to L1 wallet (main address)
 - It has setting for default LN peer (first-hop or routing node)
 - It has `opendc` (open default connection) to connect to default peer
@@ -19,14 +17,7 @@ https://github.com/lightningdevkit/ldk-sample
 
 ### For building
 
-- Prerequisite: `wallet-core` project folder, with sources and built binaries, min `3.0.9`.
 - Prerequisite: Rust (`rustc`, `cargo`)
-- Set wallet-core project folder in `src/build.rs`
-
-```
-static WALLET_CORE_PROJECT_DIR: &str = "../../../../wallet-core";
-```
-
 - Build:
 
 ```
@@ -54,7 +45,6 @@ cargo run importwallet
 - Get rid of Btc Core for UTXOs, use Blockbook
 - Get rid of Btc Core for block source, use Blockbook
 - Get rid of Btc Core: get network info, fee, broadcast
-- (Move wallet-core proj dir setting from build.rs to env)
 - (check in rust interfacing Rust module in wallet core, use it from there)
 
 

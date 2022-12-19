@@ -1,8 +1,5 @@
 pub mod bitcoind_client;
 
-// [walletcore]
-pub mod walletcore_iface;
-pub mod walletcore_extra;
 pub mod wc_proto;
 pub mod wallet;
 pub mod env;
@@ -212,7 +209,7 @@ async fn handle_ldk_events(
 			*/
 
 
-			// Create transaction using wallet-core
+			// Create transaction
 			let wc_tx = wallet.create_send_tx(addr.as_str(), *channel_value_satoshis);
 			let final_wc_tx: Transaction = encode::deserialize(&wc_tx).unwrap();
 
@@ -222,8 +219,6 @@ async fn handle_ldk_events(
 				.funding_transaction_generated(
 					&temporary_channel_id,
 					counterparty_node_id,
-					// Use tx from wallet-core
-					// final_tx,
 					final_wc_tx,
 				)
 				.is_err()
@@ -467,11 +462,11 @@ async fn start_ldk() {
 
 	// load wallet
 	let mut wallet = match load_wallet(env.network) {
-		None => {
-			println!("Could not load wallet, try using 'importwallet' argument");
+		Err(e) => {
+			println!("Could not load wallet, try using 'importwallet' argument ({})", e.to_string());
 			return;
 		},
-		Some(wallet) => wallet,
+		Ok(wallet) => wallet,
 	};
 	wallet.print_address();
 

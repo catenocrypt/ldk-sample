@@ -70,8 +70,8 @@ pub(crate) fn handle_import_wallet(network: Network) -> bool {
 	};
 
 	let wallet = match import_wallet_mnemonic(&mnemonic, network) {
-		None => return is_import,
-		Some(wallet) => wallet,
+		Err(_) => return is_import,
+		Ok(wallet) => wallet,
 	};
 
     wallet.print_address();
