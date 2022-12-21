@@ -10,9 +10,6 @@ Cargo.lock
 **/*.rs.bk
 .ldk
 
-# Generated proto files
-src/wc_proto/*.rs
-
 .env
 .pk_secret
 
