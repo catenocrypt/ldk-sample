@@ -6,13 +6,18 @@ use lightning::ln::msgs::DecodeError;
 use lightning::ln::script::ShutdownScript;
 use bitcoin::bech32::u5;
 use bitcoin::blockdata::script::Script;
-use bitcoin::blockdata::transaction::{Transaction, TxOut};
+use bitcoin::blockdata::transaction::{Transaction, TxOut, TxIn, OutPoint, EcdsaSighashType};
+use bitcoin::blockdata::witness::Witness;
+use bitcoin::consensus::encode;
+use bitcoin::hash_types::Txid;
 use bitcoin::network::constants::Network;
-use bitcoin::secp256k1::{Secp256k1, SecretKey, ecdsa::RecoverableSignature, Signing};
+use bitcoin::secp256k1::{Message, Secp256k1, SecretKey, ecdsa::RecoverableSignature, ecdsa::Signature, Signing};
 use bitcoin::util::address::Address;
 use bitcoin::util::key::{PublicKey, PrivateKey};
+use bitcoin::util::sighash::SighashCache;
 use bip39::Mnemonic;
 use bip32::{XPrv, DerivationPath};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::fs;
 
@@ -35,6 +40,12 @@ pub struct Wallet {
 
 pub struct WalletError(String);
 
+impl FromStr for WalletError {
+    type Err = WalletError;
+    fn from_str(s: &str) -> Result<Self, Self> {
+        Ok(WalletError(s.to_string()))
+    }
+}
 impl From<bitcoin::util::address::Error> for WalletError {
     fn from(e: bitcoin::util::address::Error) -> Self {
         WalletError(e.to_string())
@@ -43,6 +54,12 @@ impl From<bitcoin::util::address::Error> for WalletError {
 
 impl From<bitcoin::util::key::Error> for WalletError {
     fn from(e: bitcoin::util::key::Error) -> Self {
+        WalletError(e.to_string())
+    }
+}
+
+impl From<bitcoin::hashes::hex::Error> for WalletError {
+    fn from(e: bitcoin::hashes::hex::Error) -> Self {
         WalletError(e.to_string())
     }
 }
@@ -173,6 +190,19 @@ pub fn derive_address_from_pk(priv_key: &Vec<u8>, network: Network) -> Result<St
     Ok(address.to_string())
 }
 
+#[inline]
+fn sign<C: Signing>(ctx: &Secp256k1<C>, msg: &Message, sk: &SecretKey) -> Signature {
+	#[cfg(feature = "grind_signatures")]
+	let sig = ctx.sign_ecdsa_low_r(msg, sk);
+	#[cfg(not(feature = "grind_signatures"))]
+	let sig = ctx.sign_ecdsa(msg, sk);
+	sig
+}
+
+fn btc_to_satoshi(a: f64) -> u64 {
+    (a * 100_000_000.0).round() as u64
+}
+
 impl Wallet {
     pub fn from_pk(priv_key: &Vec<u8>, ldk_seed: &Vec<u8>, network: Network) -> Result<Wallet, WalletError> {
         let public_key = derive_pubkey_from_pk(&priv_key.clone(), network)?;
@@ -213,61 +243,109 @@ impl Wallet {
         }
     }
 
-    pub fn create_send_tx(&self, to_address: &str, output_amount: u64) -> Vec<u8> {
-        /* TODO
-        let mut signing_input = Bitcoin::SigningInput::new();
-        signing_input.hash_type = 1; // hashTypeAll
-        signing_input.amount = output_amount as i64;
-        signing_input.use_max_amount = false;
-        signing_input.byte_fee = 1; // TODO
-        signing_input.to_address = to_address.to_string();
-        signing_input.change_address = self.address.clone();
-        signing_input.coin_type = 0;
-        signing_input.private_key.push(self.private_key.clone());
+    pub fn create_send_to_tx(network: Network, own_address_str: &str, own_private_key_raw: &Vec<u8>, utxos: &Unspents, to_address: &str, output_amount: u64, fee_rate: u64) -> Result<Vec<u8>, WalletError> {
+        //println!("create_send_to_tx  to_address {}", to_address);
+        let to_addr = Address::from_str(to_address)?;
 
-        let mut sum_amount: i64 = 0;
-        for u in &self.utxos.utxos {
-            if u.address != self.address {
-                println!("discarding utxo, not own-address {} {}", u.address, self.address);
-            } else {
-                let mut utxo = Bitcoin::UnspentTransaction::new();
-                let mut outpoint = Bitcoin::OutPoint::new();
-                let mut hash = hex::decode(u.tx_id.clone()).unwrap();
-                hash.reverse();
-                outpoint.hash = hash;
-                outpoint.index = u.vout;
-                outpoint.sequence = u32::MAX - 1;
-                utxo.out_point = ::protobuf::MessageField::some(outpoint);
-                utxo.script = hex::decode(&u.script_pub_key).unwrap();
-                let amount_sat = (u.amount * 100_000_000.0) as i64;
-                utxo.amount = amount_sat;
-                //println!("input utxo  '{}' '{}' '{}' {}", u.address, u.script_pub_key, u.witness_script, utxo.amount);
-                signing_input.utxo.push(utxo);
-                sum_amount += amount_sat;
+        let secp_ctx = Secp256k1::new();
+
+        let own_private_key = PrivateKey::from_slice(&own_private_key_raw, network)?;
+        let own_public_key = own_private_key.public_key(&secp_ctx);
+
+        // check that private key matches
+        let own_address_from_key = Address::p2wpkh(&own_public_key, network)?;
+        if own_address_from_key.to_string() != own_address_str {
+            return Err(WalletError(format!("Private key does not match own address!  {} {}", own_address_from_key, own_address_str)));
+        }
+
+        let mut inputs = Vec::new();
+        let mut sum_amount: u64 = 0;
+        for u in &utxos.utxos {
+            if u.address != own_address_str {
+                println!("discarding utxo, not own-address {} {}", u.address, own_address_str);
+                continue;
             }
+
+            //println!("  u  script_pub_key {}  redeem_script {}  witness_script {}", &u.script_pub_key, &u.redeem_script, &u.witness_script);
+            let input = TxIn {
+                previous_output: OutPoint {
+                    txid: Txid::from_hash(bitcoin::hashes::sha256d::Hash::from_str(&u.tx_id)?),
+                    vout: u.vout,
+                },
+                script_sig: Script::new(), // empty for segwit
+                sequence: u32::MAX - 1,
+                witness: Witness::new(),
+            };
+            inputs.push(input);
+            let amount_sat = btc_to_satoshi(u.amount);
+            sum_amount += amount_sat;
         }
-        if signing_input.utxo.len() == 0 {
-            println!("Error: 0 utxos to consider");
-            return Vec::new();
-        }
-        if signing_input.amount - 1 >= sum_amount {
-            signing_input.use_max_amount = true;
+        if inputs.len() == 0 {
+            return Err(WalletError::from_str("Error: 0 utxos to consider")?);
         }
 
-        let input_ser = signing_input.write_to_bytes().unwrap();
-        let input_ser_data = TWData::from_vec(&input_ser);
+        let tx_size_rough_estimate = 12 + inputs.len() * 166 + 2 * 38; // TODO proper tx size estimation!
+        let fee = tx_size_rough_estimate as u64 * fee_rate;
+        let change_amount = sum_amount - output_amount - fee;
 
-        let output_ser_data = any_signer_sign(&input_ser_data, 0);
+        if sum_amount < output_amount {
+            return Err(WalletError::from_str(&format!("Insufficient input {} {}", sum_amount, output_amount))?);
+        }
+        if sum_amount < output_amount + fee {
+            return Err(WalletError::from_str(&format!("Insufficient input (fee) {} {}", sum_amount, output_amount + fee))?);
+        }
 
-        let outputp: Bitcoin::SigningOutput = protobuf::Message::parse_from_bytes(&output_ser_data.to_vec()).unwrap();
+        let mut outputs = Vec::new();
+        let output = TxOut {
+            value: output_amount,
+            script_pubkey: to_addr.script_pubkey().clone(),
+        };
+        outputs.push(output.clone());
+        if change_amount > 0 {
+            let change_output = TxOut {
+                value: change_amount,
+                script_pubkey: own_address_from_key.script_pubkey().clone(),
+            };
+            outputs.push(change_output.clone());    
+        }
+    
+        let mut tx = Transaction {
+            version: 2,
+            lock_time: 0,
+            input: inputs,
+            output: outputs,
+        };
 
-        //println!("tx encoded: {}", hex::encode(outputp.encoded.clone()));
-        println!("tx tx_id:   {}", outputp.transaction_id);
-        //println!("tx error:   {} {}", outputp.error.unwrap() as u16, outputp.error_message);
+        // signatures
+        let mut idx = 0;
+        for u in &utxos.utxos {
+            if u.address != own_address_str {
+                continue;
+            }
+            let amount_sat = btc_to_satoshi(u.amount);
+            let p2pkh_script = Script::new_p2pkh(&own_public_key.pubkey_hash());
+            let sighash = ::bitcoin::secp256k1::Message::from_slice(&SighashCache::new(&tx).segwit_signature_hash(
+                idx,
+                &p2pkh_script,
+                amount_sat,
+                EcdsaSighashType::All
+            ).unwrap()[..]).unwrap();
+            let sig = sign(&secp_ctx, &sighash, &own_private_key.inner);
+            let mut sig_ser = sig.serialize_der().to_vec();
+            sig_ser.push(EcdsaSighashType::All as u8);
+            tx.input[idx].witness.push(sig_ser);
+            tx.input[idx].witness.push(own_public_key.to_bytes());
+            idx = idx + 1;
+        }
 
-        outputp.encoded
-        */
-        Vec::new()
+        //println!("tx encoded: {}", encode::serialize_hex(&tx));
+
+        Ok(encode::serialize(&tx))
+    }
+
+    pub fn create_send_tx(&self, to_address: &str, output_amount: u64) -> Result<Vec<u8>, WalletError> {
+        let fee_rate = 1; // TODO proper dynamic fee rate
+        Self::create_send_to_tx(self.network, &self.address, &self.private_key, &self.utxos, to_address, output_amount, fee_rate)
     }
 }
 
