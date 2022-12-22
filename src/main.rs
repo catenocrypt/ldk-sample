@@ -208,26 +208,22 @@ async fn handle_ldk_events(
 			*/
 
 			// Create transaction
-			match wallet.create_send_tx(addr.as_str(), *channel_value_satoshis) {
-				Err(e) => println!("Error creating tx {}", e.to_string()),
-				Ok(tx) => {
-					let final_funding_tx: Transaction = encode::deserialize(&tx).unwrap();
+			let tx = wallet.create_send_tx(addr.as_str(), *channel_value_satoshis);
+			let final_funding_tx: Transaction = encode::deserialize(&tx).unwrap();
 
-					// Give the funding transaction back to LDK for opening the channel.
-					if channel_manager
-						.funding_transaction_generated(
-							&temporary_channel_id,
-							counterparty_node_id,
-							final_funding_tx,
-						)
-						.is_err()
-					{
-						println!(
-							"\nERROR: Channel went away before we could fund it. The peer disconnected or refused the channel.");
-						print!("> ");
-						io::stdout().flush().unwrap();
-					}
-				}
+			// Give the funding transaction back to LDK for opening the channel.
+			if channel_manager
+				.funding_transaction_generated(
+					&temporary_channel_id,
+					counterparty_node_id,
+					final_funding_tx,
+				)
+				.is_err()
+			{
+				println!(
+					"\nERROR: Channel went away before we could fund it. The peer disconnected or refused the channel.");
+				print!("> ");
+				io::stdout().flush().unwrap();
 			};
 		}
 		Event::PaymentReceived { payment_hash, purpose, amount_msat } => {

@@ -4,14 +4,13 @@ use lightning::chain::keysinterface::{KeysInterface, KeysManager, KeyMaterial, R
 use lightning::chain::keysinterface::SpendableOutputDescriptor::{StaticOutput, DelayedPaymentOutput, StaticPaymentOutput};
 use lightning::ln::msgs::DecodeError;
 use lightning::ln::script::ShutdownScript;
-use bitcoin::network::constants::Network;
 use bitcoin::bech32::u5;
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::{Transaction, TxOut};
-use bitcoin::secp256k1::{SecretKey, Signing, Secp256k1};
-use bitcoin::secp256k1::ecdsa::RecoverableSignature;
-use bitcoin::util::key::{PublicKey, PrivateKey};
+use bitcoin::network::constants::Network;
+use bitcoin::secp256k1::{Secp256k1, SecretKey, ecdsa::RecoverableSignature, Signing};
 use bitcoin::util::address::Address;
+use bitcoin::util::key::{PublicKey, PrivateKey};
 use bip39::Mnemonic;
 use bip32::{XPrv, DerivationPath};
 use std::sync::Arc;
@@ -22,6 +21,7 @@ const LN_SEED_DERIVATION_PATH: &str = "m/2121'/9735'/0'/0/0";
 const LN_SEED_DERIVATION_PATH_TESTNET: &str = "m/2121'/9735'/1'/0/0";
 
 pub struct Wallet {
+    network: Network,
     // own address
     pub address: String,
     // private key, private field
@@ -178,6 +178,7 @@ impl Wallet {
         let public_key = derive_pubkey_from_pk(&priv_key.clone(), network)?;
         let address = derive_address_from_pk(priv_key, network)?;
         Ok(Wallet {
+            network,
             address,
             private_key: priv_key.clone(),
             public_key,
