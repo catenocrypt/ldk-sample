@@ -10,7 +10,7 @@ use bitcoin::network::constants::Network;
 use bitcoin::secp256k1::PublicKey;
 use lightning::ln::channelmanager::{PaymentId, RecipientOnionFields, Retry};
 use lightning::ln::msgs::NetAddress;
-use lightning::ln::{PaymentHash, PaymentPreimage};
+use lightning::ln::{ChannelId, PaymentHash, PaymentPreimage};
 use lightning::onion_message::OnionMessagePath;
 use lightning::onion_message::{CustomOnionMessageContents, Destination, OnionMessageContents};
 use lightning::routing::gossip::NodeId;
@@ -30,6 +30,7 @@ use std::path::Path;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::convert::TryFrom;
 
 pub(crate) struct LdkUserInfo {
 	pub(crate) bitcoind_rpc_username: String,
@@ -303,8 +304,7 @@ pub(crate) async fn poll_for_user_input(
 						println!("ERROR: couldn't parse channel_id");
 						continue;
 					}
-					let mut channel_id = [0; 32];
-					channel_id.copy_from_slice(&channel_id_vec.unwrap());
+					let channel_id = ChannelId::from_bytes(*<&[u8; 32]>::try_from(channel_id_vec.unwrap().as_slice()).unwrap());
 
 					let peer_pubkey_str = words.next();
 					if peer_pubkey_str.is_none() {
@@ -339,8 +339,7 @@ pub(crate) async fn poll_for_user_input(
 						println!("ERROR: couldn't parse channel_id");
 						continue;
 					}
-					let mut channel_id = [0; 32];
-					channel_id.copy_from_slice(&channel_id_vec.unwrap());
+					let channel_id = ChannelId::from_bytes(*<&[u8; 32]>::try_from(channel_id_vec.unwrap().as_slice()).unwrap());
 
 					let peer_pubkey_str = words.next();
 					if peer_pubkey_str.is_none() {
@@ -502,7 +501,7 @@ fn list_channels(channel_manager: &Arc<ChannelManager>, network_graph: &Arc<Netw
 	for chan_info in channel_manager.list_channels() {
 		println!("");
 		println!("\t{{");
-		println!("\t\tchannel_id: {},", hex_utils::hex_str(&chan_info.channel_id[..]));
+		println!("\t\tchannel_id: {},", &chan_info.channel_id);
 		if let Some(funding_txo) = chan_info.funding_txo {
 			println!("\t\tfunding_txid: {},", funding_txo.txid);
 		}
@@ -783,7 +782,7 @@ fn get_invoice(
 }
 
 fn close_channel(
-	channel_id: [u8; 32], counterparty_node_id: PublicKey, channel_manager: Arc<ChannelManager>,
+	channel_id: ChannelId, counterparty_node_id: PublicKey, channel_manager: Arc<ChannelManager>,
 ) {
 	match channel_manager.close_channel(&channel_id, &counterparty_node_id) {
 		Ok(()) => println!("EVENT: initiating channel close"),
@@ -792,7 +791,7 @@ fn close_channel(
 }
 
 fn force_close_channel(
-	channel_id: [u8; 32], counterparty_node_id: PublicKey, channel_manager: Arc<ChannelManager>,
+	channel_id: ChannelId, counterparty_node_id: PublicKey, channel_manager: Arc<ChannelManager>,
 ) {
 	match channel_manager.force_close_broadcasting_latest_txn(&channel_id, &counterparty_node_id) {
 		Ok(()) => println!("EVENT: initiating channel force-close"),

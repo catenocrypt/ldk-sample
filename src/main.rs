@@ -23,7 +23,7 @@ use lightning::ln::channelmanager::{
 };
 use lightning::ln::msgs::DecodeError;
 use lightning::ln::peer_handler::{IgnoringMessageHandler, MessageHandler, SimpleArcPeerManager};
-use lightning::ln::{PaymentHash, PaymentPreimage, PaymentSecret};
+use lightning::ln::{ChannelId, PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::onion_message::{DefaultMessageRouter, SimpleArcOnionMessenger};
 use lightning::routing::gossip;
 use lightning::routing::gossip::{NodeId, P2PGossipSync};
@@ -312,7 +312,7 @@ async fn handle_ldk_events(
 			let nodes = read_only_network_graph.nodes();
 			let channels = channel_manager.list_channels();
 
-			let node_str = |channel_id: &Option<[u8; 32]>| match channel_id {
+			let node_str = |channel_id: &Option<ChannelId>| match channel_id {
 				None => String::new(),
 				Some(channel_id) => match channels.iter().find(|c| c.channel_id == *channel_id) {
 					None => String::new(),
@@ -329,9 +329,9 @@ async fn handle_ldk_events(
 					}
 				},
 			};
-			let channel_str = |channel_id: &Option<[u8; 32]>| {
+			let channel_str = |channel_id: &Option<ChannelId>| {
 				channel_id
-					.map(|channel_id| format!(" with channel {}", hex_utils::hex_str(&channel_id)))
+					.map(|channel_id| format!(" with channel {}", &channel_id))
 					.unwrap_or_default()
 			};
 			let from_prev_str =
@@ -395,7 +395,7 @@ async fn handle_ldk_events(
 		Event::ChannelPending { channel_id, counterparty_node_id, .. } => {
 			println!(
 				"\nEVENT: Channel {} with peer {} is pending awaiting funding lock-in!",
-				hex_utils::hex_str(&channel_id),
+				channel_id,
 				hex_utils::hex_str(&counterparty_node_id.serialize()),
 			);
 			print!("> ");
@@ -409,7 +409,7 @@ async fn handle_ldk_events(
 		} => {
 			println!(
 				"\nEVENT: Channel {} with peer {} is ready to be used!",
-				hex_utils::hex_str(channel_id),
+				channel_id,
 				hex_utils::hex_str(&counterparty_node_id.serialize()),
 			);
 			print!("> ");
@@ -418,7 +418,7 @@ async fn handle_ldk_events(
 		Event::ChannelClosed { channel_id, reason, user_channel_id: _ } => {
 			println!(
 				"\nEVENT: Channel {} closed due to: {:?}",
-				hex_utils::hex_str(&channel_id),
+				channel_id,
 				reason
 			);
 			print!("> ");
