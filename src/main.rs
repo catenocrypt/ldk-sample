@@ -195,12 +195,12 @@ async fn handle_ldk_events(
 			// Construct the raw transaction with one output, that is paid the amount of the
 			// channel.
 			let addr = WitnessProgram::from_scriptpubkey(
-				&output_script[..],
+				&output_script.as_bytes(),
 				match network {
 					Network::Bitcoin => bitcoin_bech32::constants::Network::Bitcoin,
-					Network::Testnet => bitcoin_bech32::constants::Network::Testnet,
 					Network::Regtest => bitcoin_bech32::constants::Network::Regtest,
 					Network::Signet => bitcoin_bech32::constants::Network::Signet,
+					Network::Testnet | _ => bitcoin_bech32::constants::Network::Testnet,
 				},
 			)
 			.expect("Lightning funding tx should always be to a SegWit output")
@@ -539,6 +539,7 @@ async fn start_ldk() {
 		args.bitcoind_rpc_port,
 		args.bitcoind_rpc_username.clone(),
 		args.bitcoind_rpc_password.clone(),
+		args.network,
 		tokio::runtime::Handle::current(),
 		Arc::clone(&logger),
 	)
@@ -556,9 +557,9 @@ async fn start_ldk() {
 	if bitcoind_chain
 		!= match args.network {
 			bitcoin::Network::Bitcoin => "main",
-			bitcoin::Network::Testnet => "test",
 			bitcoin::Network::Regtest => "regtest",
 			bitcoin::Network::Signet => "signet",
+			bitcoin::Network::Testnet | _ => "test",
 		} {
 		println!(
 			"Chain argument ({}) didn't match bitcoind chain ({})",
