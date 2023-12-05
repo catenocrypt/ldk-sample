@@ -185,6 +185,31 @@ async fn handle_ldk_events(
 	network: Network, event: Event,
 ) {
 	match event {
+		Event::OpenChannelV2Request {
+			temporary_channel_id: _,
+			counterparty_node_id: _,
+			funding_satoshis: _,
+			channel_type: _
+		} => {
+			println!("TODO: OpenChannelV2Request");
+		}
+		Event::FundingInputsContributionReady {
+			channel_id: _,
+			counterparty_node_id: _,
+			holder_funding_satoshis: _,
+			counterparty_funding_satoshis: _,
+			user_channel_id: _
+		} => {
+			println!("TODO: FundingInputsContributionReady");
+		}
+		Event::FundingTransactionReadyForSigning{
+			channel_id: _,
+			counterparty_node_id: _,
+			user_channel_id: _,
+			unsigned_transaction: _
+		} => {
+			println!("TODO: FundingTransactionReadyForSigning");
+		}
 		Event::FundingGenerationReady {
 			temporary_channel_id,
 			counterparty_node_id,
