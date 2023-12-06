@@ -8,8 +8,11 @@ mod sweep;
 
 use crate::bitcoind_client::BitcoindClient;
 use crate::disk::FilesystemLogger;
-use bitcoin::blockdata::transaction::Transaction;
+use bitcoin::blockdata::script::ScriptBuf;
+use bitcoin::blockdata::transaction::{Sequence, Transaction, TxIn};
 use bitcoin::consensus::encode;
+use bitcoin::hash_types::WPubkeyHash;
+use bitcoin::hashes::Hash as _;
 use bitcoin::network::constants::Network;
 use bitcoin::BlockHash;
 use bitcoin_bech32::WitnessProgram;
@@ -186,29 +189,83 @@ async fn handle_ldk_events(
 ) {
 	match event {
 		Event::OpenChannelV2Request {
-			temporary_channel_id: _,
-			counterparty_node_id: _,
-			funding_satoshis: _,
+			temporary_channel_id,
+			counterparty_node_id,
+			funding_satoshis,
 			channel_type: _
 		} => {
-			println!("TODO: OpenChannelV2Request");
+			println!("\nEVENT: OpenChannelV2Request");
+			match channel_manager.accept_inbound_channel(&temporary_channel_id, &counterparty_node_id, 0) {
+				Ok(_) => println!("Accepting open_channel_v2 request, without contributing funds, cap {}", funding_satoshis),
+				Err(e) => println!("ERROR: Error accepting open_channel_v2 request, {:?}", e),
+			}
 		}
 		Event::FundingInputsContributionReady {
-			channel_id: _,
-			counterparty_node_id: _,
-			holder_funding_satoshis: _,
-			counterparty_funding_satoshis: _,
-			user_channel_id: _
+			channel_id,
+			counterparty_node_id,
+			holder_funding_satoshis,
+			counterparty_funding_satoshis,
+			user_channel_id,
 		} => {
-			println!("TODO: FundingInputsContributionReady");
+			println!("\nEVENT: FundingInputsContributionReady {} {} {}", holder_funding_satoshis, counterparty_funding_satoshis, user_channel_id);
+
+			// Construct the raw transaction with one output, that is paid the amount of the channel.
+			// Use one output, which is a placeholder, destination does not matter, only the inputs
+			let dummy_pubkey = ScriptBuf::new_v0_p2wpkh(&WPubkeyHash::all_zeros());
+			let addr = WitnessProgram::from_scriptpubkey(
+				dummy_pubkey.as_bytes(),
+				match network {
+					Network::Bitcoin => bitcoin_bech32::constants::Network::Bitcoin,
+					Network::Regtest => bitcoin_bech32::constants::Network::Regtest,
+					Network::Signet => bitcoin_bech32::constants::Network::Signet,
+					Network::Testnet | _ => bitcoin_bech32::constants::Network::Testnet,
+				},
+			)
+				.expect("Lightning funding tx should always be to a SegWit output")
+				.to_address();
+			let mut outputs = vec![HashMap::with_capacity(1)];
+			outputs[0].insert(addr, holder_funding_satoshis as f64 / 100_000_000.0);
+			let raw_tx = bitcoind_client.create_raw_transaction(outputs).await;
+
+			// Have our wallet put the inputs into the transaction such that the output is satisfied.
+			let funded_tx = bitcoind_client.fund_raw_transaction(raw_tx).await;
+			let funded_transaction: Transaction = encode::deserialize(&hex_utils::to_vec(&funded_tx.hex).unwrap()).unwrap();
+			// println!("funded_transaction {:?}", funded_transaction);
+
+			let mut funding_inputs: Vec<(TxIn, Transaction)> = vec![];
+			for i in &funded_transaction.input {
+				// obtain prev tx
+				let prev_raw_tx = bitcoind_client.get_transaction(i.previous_output.txid.to_string()).await;
+				let prev_tx: Transaction = encode::deserialize(&hex_utils::to_vec(&prev_raw_tx.hex).unwrap()).unwrap();
+				// println!("prev_tx {:?}", prev_tx);
+				// TODO reduce the sequence on the input
+				let mut new_i = i.clone();
+				new_i.sequence = Sequence(new_i.sequence.0 -  5);
+				funding_inputs.push((new_i, prev_tx));
+			}
+			match channel_manager.contribute_funding_inputs(&channel_id, &counterparty_node_id, funding_inputs) {
+				Ok(_) => println!("Continuing open_channel_v2 flow with {} inputs", funded_transaction.input.len()),
+				Err(e) => println!("ERROR: Error in contribute_funding_inputs(), {:?}", e),
+			}
 		}
 		Event::FundingTransactionReadyForSigning{
-			channel_id: _,
-			counterparty_node_id: _,
+			channel_id,
+			counterparty_node_id,
 			user_channel_id: _,
-			unsigned_transaction: _
+			unsigned_transaction,
 		} => {
-			println!("TODO: FundingTransactionReadyForSigning");
+			println!("\nEVENT: FundingTransactionReadyForSigning");
+
+			let unsigned_transaction_hex = hex_utils::hex_str(&unsigned_transaction.encode());
+			let signed_tx = bitcoind_client.sign_raw_transaction_with_wallet(unsigned_transaction_hex).await;
+			assert_eq!(signed_tx.complete, true);
+			let final_tx: Transaction = encode::deserialize(&hex_utils::to_vec(&signed_tx.hex).unwrap()).unwrap();
+			println!("final_tx len {} size {} vsize {} txid {} {:?}", final_tx.encode().len(), final_tx.size(), final_tx.vsize(), final_tx.txid(), final_tx);
+
+			match channel_manager.funding_transaction_signed(&channel_id, &counterparty_node_id, final_tx.clone()) {
+				Ok(_) => println!("Funding transaction signed for open_channel_v2"),
+				Err(e) => println!("ERROR: Error in funding_transaction_signed(), {:?}", e),
+			}
 		}
 		Event::FundingGenerationReady {
 			temporary_channel_id,
@@ -700,7 +757,8 @@ async fn start_ldk() {
 	let mut user_config = UserConfig::default();
 	user_config.channel_handshake_limits.force_announced_channel_preference = false;
 	user_config.channel_handshake_config.negotiate_anchors_zero_fee_htlc_tx = true;
-	user_config.manually_accept_inbound_channels = true;
+	// TODO open_channel_V2 has some problem in manual accept mode
+	// user_config.manually_accept_inbound_channels = true;
 	let mut restarting_node = true;
 	let (channel_manager_blockhash, channel_manager) = {
 		if let Ok(mut f) = fs::File::open(format!("{}/manager", ldk_data_dir.clone())) {

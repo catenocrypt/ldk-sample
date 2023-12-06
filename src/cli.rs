@@ -153,6 +153,70 @@ pub(crate) fn poll_for_user_input(
 						);
 					}
 				}
+				"openchannel2" => {
+					let peer_pubkey_and_ip_addr = words.next();
+					let channel_value_sat = words.next();
+					if peer_pubkey_and_ip_addr.is_none() || channel_value_sat.is_none() {
+						println!("ERROR: openchannel2 has 2 required arguments: `openchannel2 pubkey@host:port channel_amt_satoshis` [--public] [--with-anchors]");
+						continue;
+					}
+					let peer_pubkey_and_ip_addr = peer_pubkey_and_ip_addr.unwrap();
+					let (pubkey, peer_addr) =
+						match parse_peer_info(peer_pubkey_and_ip_addr.to_string()) {
+							Ok(info) => info,
+							Err(e) => {
+								println!("{:?}", e.into_inner().unwrap());
+								continue;
+							}
+						};
+
+					let chan_amt_sat: Result<u64, _> = channel_value_sat.unwrap().parse();
+					if chan_amt_sat.is_err() {
+						println!("ERROR: channel amount must be a number");
+						continue;
+					}
+
+					if tokio::runtime::Handle::current()
+						.block_on(connect_peer_if_necessary(
+							pubkey,
+							peer_addr,
+							peer_manager.clone(),
+						))
+						.is_err()
+					{
+						continue;
+					};
+
+					let (mut announce_channel, mut with_anchors) = (false, false);
+					while let Some(word) = words.next() {
+						match word {
+							"--public" | "--public=true" => announce_channel = true,
+							"--public=false" => announce_channel = false,
+							"--with-anchors" | "--with-anchors=true" => with_anchors = true,
+							"--with-anchors=false" => with_anchors = false,
+							_ => {
+								println!("ERROR: invalid boolean flag format. Valid formats: `--option`, `--option=true` `--option=false`");
+								continue;
+							}
+						}
+					}
+
+					if open_dual_funded_channel(
+						pubkey,
+						chan_amt_sat.unwrap(),
+						announce_channel,
+						with_anchors,
+						channel_manager.clone(),
+					)
+					.is_ok()
+					{
+						let peer_data_path = format!("{}/channel_peer_data", ldk_data_dir.clone());
+						let _ = disk::persist_channel_peer(
+							Path::new(&peer_data_path),
+							peer_pubkey_and_ip_addr,
+						);
+					}
+				}
 				"sendpayment" => {
 					let invoice_str = words.next();
 					if invoice_str.is_none() {
@@ -471,6 +535,7 @@ fn help() {
 	println!("  quit\tClose the application.");
 	println!("\n  Channels:");
 	println!("      openchannel pubkey@host:port <amt_satoshis> [--public] [--with-anchors]");
+	println!("      openchannel2 pubkey@host:port <amt_satoshis> [--public] [--with-anchors]    Open dual funded channel, V2 channel open");
 	println!("      closechannel <channel_id> <peer_pubkey>");
 	println!("      forceclosechannel <channel_id> <peer_pubkey>");
 	println!("      listchannels");
@@ -679,6 +744,36 @@ fn open_channel(
 		}
 		Err(e) => {
 			println!("ERROR: failed to open channel: {:?}", e);
+			return Err(());
+		}
+	}
+}
+
+fn open_dual_funded_channel(
+	peer_pubkey: PublicKey, channel_amt_sat: u64, announced_channel: bool, with_anchors: bool,
+	channel_manager: Arc<ChannelManager>,
+) -> Result<(), ()> {
+	let config = UserConfig {
+		channel_handshake_limits: ChannelHandshakeLimits {
+			// lnd's max to_self_delay is 2016, so we want to be compatible.
+			their_to_self_delay: 2016,
+			..Default::default()
+		},
+		channel_handshake_config: ChannelHandshakeConfig {
+			announced_channel,
+			negotiate_anchors_zero_fee_htlc_tx: with_anchors,
+			..Default::default()
+		},
+		..Default::default()
+	};
+
+	match channel_manager.create_dual_funded_channel(peer_pubkey, channel_amt_sat, None, 0, Some(config)) {
+		Ok(_) => {
+			println!("EVENT: initiated V2 channel with peer {}. ", peer_pubkey);
+			return Ok(());
+		}
+		Err(e) => {
+			println!("ERROR: failed to open V2 channel: {:?}", e);
 			return Err(());
 		}
 	}
