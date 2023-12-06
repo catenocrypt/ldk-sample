@@ -1,6 +1,6 @@
 use crate::convert::{
 	BlockchainInfo, FeeResponse, FundedTx, ListUnspentResponse, MempoolMinFeeResponse, NewAddress,
-	RawTx, SignedTx,
+	RawTx, SignedTx, GetTx,
 };
 use crate::disk::FilesystemLogger;
 use crate::hex_utils;
@@ -212,6 +212,16 @@ impl BitcoindClient {
 			.call_method::<RawTx>(
 				"createrawtransaction",
 				&vec![serde_json::json!([]), outputs_json],
+			)
+			.await
+			.unwrap()
+	}
+
+	pub async fn get_transaction(&self, txid: String) -> GetTx {
+		self.bitcoind_rpc_client
+			.call_method::<GetTx>(
+				"gettransaction",
+				&vec![serde_json::json!(txid)],
 			)
 			.await
 			.unwrap()

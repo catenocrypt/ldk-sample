@@ -28,6 +28,19 @@ impl TryInto<RawTx> for JsonResponse {
 	}
 }
 
+pub struct GetTx {
+	pub hex: String,
+}
+
+impl TryInto<GetTx> for JsonResponse {
+	type Error = std::io::Error;
+	fn try_into(self) -> std::io::Result<GetTx> {
+		Ok(GetTx {
+			hex: self.0["hex"].as_str().unwrap().to_string(),
+		})
+	}
+}
+
 pub struct SignedTx {
 	pub complete: bool,
 	pub hex: String,
