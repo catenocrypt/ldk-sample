@@ -260,7 +260,8 @@ async fn handle_ldk_events(
 			let signed_tx = bitcoind_client.sign_raw_transaction_with_wallet(unsigned_transaction_hex).await;
 			assert_eq!(signed_tx.complete, true);
 			let final_tx: Transaction = encode::deserialize(&hex_utils::to_vec(&signed_tx.hex).unwrap()).unwrap();
-			println!("final_tx len {} size {} vsize {} txid {} {:?}", final_tx.encode().len(), final_tx.size(), final_tx.vsize(), final_tx.txid(), final_tx);
+			println!("final_tx len {} size {} vsize {} txid {}", final_tx.encode().len(), final_tx.size(), final_tx.vsize(), final_tx.txid());
+			println!("final_tx \n {:?} \n {}", final_tx, hex_utils::hex_str(&final_tx.encode()));
 
 			match channel_manager.funding_transaction_signed(&channel_id, &counterparty_node_id, final_tx.clone()) {
 				Ok(_) => println!("Funding transaction signed for open_channel_v2"),
